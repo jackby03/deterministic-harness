@@ -179,6 +179,11 @@ func Run(opts Options) (Report, error) {
 		names = opts.Only
 	}
 
+	// A gate that mutates the tree invalidates the evidence it is producing: the
+	// report would describe a tree that no longer exists. Tracked files only —
+	// fuzzing legitimately writes untracked corpus entries.
+	before := trackedStatus(opts.Root)
+
 	rep := Report{
 		RegistrySHA:     hash(opts.Registry.Source),
 		Tier:            tier,
@@ -205,7 +210,43 @@ func Run(opts Options) (Report, error) {
 		rep.Gates = append(rep.Gates, res)
 	}
 
+	if after := trackedStatus(opts.Root); after != before {
+		rep.Gates = append(rep.Gates, Result{
+			Gate:   "tree-mutation",
+			Kind:   "self",
+			Status: Failed,
+			Reason: "a gate modified tracked files during the run: " + firstLineChange(before, after),
+		})
+		rep.Green = false
+	}
+
 	return rep, nil
+}
+
+// trackedStatus lists modifications to tracked files, ignoring untracked output.
+func trackedStatus(root string) string {
+	out, err := exec.Command("git", "-C", root, "status", "--porcelain", "--untracked-files=no").Output()
+	if err != nil {
+		return ""
+	}
+	return string(out)
+}
+
+// firstLineChange names one file that differs, which is all the agent needs.
+func firstLineChange(before, after string) string {
+	seen := map[string]bool{}
+	for _, l := range strings.Split(before, "\n") {
+		seen[l] = true
+	}
+	for _, l := range strings.Split(after, "\n") {
+		if strings.TrimSpace(l) == "" {
+			continue
+		}
+		if !seen[l] {
+			return strings.TrimSpace(l)
+		}
+	}
+	return "tracked files changed"
 }
 
 func evaluate(g *registry.Gate, opts Options) Result {

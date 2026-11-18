@@ -70,6 +70,21 @@ Two traps worth knowing:
   assertion executed as root proves nothing about the daemon that will run
   unprivileged in production.
 
+## Gates must not mutate the tree
+
+A run compares `git status --porcelain --untracked-files=no` before and after. If
+a gate modifies a tracked file, the report gains a failing `tree-mutation` entry:
+the evidence would otherwise describe a tree that no longer exists.
+
+This is not theoretical. During the first real run, `go mod download` inside the
+container wrote to the bind-mounted tree and rewrote `go.mod`, moving two
+dependencies from indirect to direct. The gate passed; the tree had changed. Any
+tool that is allowed to "fix" metadata (`go mod tidy`, `pnpm install` without
+`--frozen-lockfile`, `cargo update`) is a candidate.
+
+Untracked output is allowed on purpose: fuzzing writes new corpus entries, and
+those are the point.
+
 ## Generated blocks
 
 The registry owns some facts that are derived, not decided: how many seeds each
