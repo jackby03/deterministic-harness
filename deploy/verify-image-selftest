@@ -1,0 +1,47 @@
+#!/usr/bin/env bash
+# Autotest de la imagen verify.
+#
+# Cada herramienta que falta convierte un gate en not_run permanente. Comprobar
+# que existen, y con la versión que el registro declara, es más barato que
+# descubrirlo cuando un tier no cierra nunca.
+set -u
+
+fail=0
+
+check() {
+    local name="$1" want="$2" got
+    # bash -c: los comandos con pipe no se expanden desde una variable.
+    if ! got="$(bash -c "$3" 2>&1)"; then
+        echo "FAIL $name: no responde"
+        fail=1
+        return
+    fi
+    if [ -n "$want" ] && [[ "$got" != *"$want"* ]]; then
+        echo "FAIL $name: esperaba '$want', obtuve '$got'"
+        fail=1
+        return
+    fi
+    echo "OK   $name: $got"
+}
+
+check "go"             "go1.22.12" "go version"
+check "golangci-lint"  "2.15.0"    "golangci-lint --version"
+check "gcc"            ""          "gcc -dumpversion"
+check "g++"            ""          "g++ -dumpversion"
+check "helm"           "v3."       "helm version --short"
+check "systemd-analyze" ""         "systemd-analyze --version | head -1"
+check "ldd"            ""          "ldd --version | head -1"
+check "make"           ""          "make --version | head -1"
+check "bash"           ""          "bash --version | head -1"
+check "git"            ""          "git --version"
+check "jq"             ""          "jq --version"
+
+echo "---"
+if [ "$fail" -ne 0 ]; then
+    echo "IMAGEN INCOMPLETA"
+    exit 1
+fi
+
+echo "uid=$(id -u) user=$(id -un) gopath=$GOPATH gotoolchain=$GOTOOLCHAIN"
+[ "$(id -u)" -eq 0 ] && echo "WARN: corriendo como root; los tests de permisos no valen"
+echo "IMAGEN OK"

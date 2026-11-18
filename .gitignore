@@ -1,0 +1,4 @@
+/bin/
+/.artifacts/
+*.out
+.DS_Store

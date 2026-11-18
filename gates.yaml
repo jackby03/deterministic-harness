@@ -1,0 +1,82 @@
+# This repository's own profile: the harness verifies itself.
+#
+# It is deliberately small. The point is not to gate every change here, it is to
+# show a complete, working profile that exercises `self`, `command`,
+# `go-test` and `go-test-selectors` without any project-specific noun.
+
+schema_version: 13
+default_tier: 2
+
+bootstrap:
+  enabled: false
+  deadline_date: "2027-12-31"
+  allowed_planned: []
+
+features:
+  traceability: off
+
+governance:
+  paths:
+    - "gates.yaml"
+    - "go.mod"
+    - "Makefile"
+    - ".golangci.yml"
+    - ".github/workflows/**"
+
+gates:
+  registry-coverage:
+    kind: self
+    check: registry-coverage
+    covers: ["gates.yaml"]
+    min_inventory:
+      rules:
+        - "no_orphan_gates"
+        - "covers_intersect_touch_sets"
+        - "hermetic_runs"
+        - "bootstrap_has_deadline"
+
+  build:
+    kind: command
+    run: "CGO_ENABLED=0 go build ./..."
+    covers: ["cmd/**", "internal/**", "purity/**"]
+
+  test:
+    kind: go-test
+    run: "CGO_ENABLED=0 go test ./..."
+    covers: ["cmd/**", "internal/**", "purity/**"]
+
+  # The boundary test is a gate of its own: if the motor names the project it
+  # verifies, it stops being reusable.
+  purity:
+    kind: go-test-selectors
+    run: "CGO_ENABLED=0 go test -v -run '^(TestFrameworkHasNoProjectNouns|TestProfileCarriesTheProjectNouns)$' ./purity/"
+    covers: ["purity/**"]
+    min_inventory:
+      forbid_skipped_selectors: true
+      required_selectors:
+        - "TestFrameworkHasNoProjectNouns"
+        - "TestProfileCarriesTheProjectNouns"
+
+  lint:
+    kind: command
+    run: "CGO_ENABLED=0 golangci-lint run ./..."
+    covers: ["cmd/**", "internal/**", "purity/**"]
+
+tiers:
+  1: [build, test, purity]
+  2: [registry-coverage, build, test, purity, lint]
+  3: [registry-coverage, build, test, purity, lint]
+
+touch_sets:
+  tier_1:
+    - "docs/**"
+    - "examples/**"
+    - "*.md"
+  tier_3:
+    - "internal/**"
+    - "cmd/**"
+    - "purity/**"
+    - "gates.yaml"
+    - "go.mod"
+    - "Makefile"
+    - ".github/workflows/**"

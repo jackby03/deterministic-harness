@@ -1,0 +1,62 @@
+# Minimal profile — copy this into a repo root and replace the paths.
+#
+# It uses only `command` gates, which need no adapter: exit code is the whole
+# result. That is enough to start, and it is the tier that catches most breakage.
+#
+# Run: go run ./cmd/harness-verify -registry gates.yaml -tier 1
+
+schema_version: 13
+default_tier: 2
+
+# No deadline needed: nothing is planned.
+bootstrap:
+  enabled: false
+  deadline_date: "2027-12-31"
+  allowed_planned: []
+
+# This project has no normative documents to cite. Drop this line if it does.
+features:
+  traceability: off
+
+gates:
+  # The registry checks itself: gates in no tier never run, and a `covers` glob
+  # that matches no file is decorative.
+  registry-coverage:
+    kind: self
+    check: registry-coverage
+    covers: ["gates.yaml"]
+    min_inventory:
+      rules: ["no_orphan_gates", "covers_intersect_touch_sets", "bootstrap_has_deadline"]
+
+  build:
+    kind: command
+    run: "make build"
+    covers: ["src/**"]
+
+  lint:
+    kind: command
+    run: "make lint"
+    covers: ["src/**"]
+
+  test:
+    kind: command
+    run: "make test"
+    covers: ["src/**", "test/**"]
+
+tiers:
+  1: [registry-coverage, build]
+  # Tier 2 is the floor for anything in the source tree.
+  2: [registry-coverage, build, lint, test]
+  # Duplicated on purpose: add here the gates that only make sense on expensive
+  # paths (benchmarks, e2e, migrations). Until then, the same set applies.
+  3: [registry-coverage, build, lint, test]
+
+touch_sets:
+  tier_1:
+    - "docs/**"
+    - "*.md"
+  tier_3:
+    # Default tier is 2, so the source tree needs no entry. List only the paths
+    # where a mistake is expensive and hard to undo.
+    - "src/migrations/**"
+    - "src/auth/**"

@@ -1,0 +1,26 @@
+version: "2"
+
+run:
+  go: "1.22"
+  timeout: 5m
+
+linters:
+  default: standard
+  enable:
+    - bodyclose
+    - errorlint
+    - misspell
+    - nilerr
+    - unconvert
+
+issues:
+  # No baseline: the tree is clean, so every finding is a regression.
+  max-issues-per-linter: 0
+  max-same-issues: 0
+
+formatters:
+  enable:
+    - gofmt
+  settings:
+    gofmt:
+      simplify: true

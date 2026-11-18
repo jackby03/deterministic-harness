@@ -1,0 +1,78 @@
+# Imagen `verify` — entorno de medición de los gates de Waffynx.
+#
+# NO es la imagen de producción. La de producción (deploy/docker/Dockerfile:70)
+# es debian-slim + python3 + curl, sin compiladores: superficie mínima. Esta lleva
+# g++, golangci-lint, helm y systemd-analyze porque los gates los necesitan.
+#
+# Por qué existe:
+#   1. Reproducibilidad: los baselines de allocations solo valen con go1.22.12
+#      exacto. Con go1.26 el mismo código mide 29/8 en vez de 35/12.
+#   2. Identidad: el digest de esta imagen es lo que hace que "verde local" y
+#      "verde en CI" sean la misma afirmación.
+#   3. Aislamiento: los gates corren con --network none y --user 1000.
+#
+# Build:
+#   docker build -f deploy/docker/Dockerfile.verify -t waffynx-verify:<ver> .
+# Pin (después de push):
+#   docker buildx imagetools inspect waffynx-verify:<ver>   # -> sha256:...
+#
+# La toolchain de Go se toma de la imagen oficial, así no hay checksums escritos a
+# mano ni tarballs sin verificar: el tag de origen es la garantía, y el digest de
+# esta imagen es la que queda congelada.
+
+FROM golang:1.22.12-bookworm AS gotoolchain
+
+FROM debian:bookworm-slim
+
+ARG DEBIAN_FRONTEND=noninteractive
+ARG GOLANGCI_VERSION=v2.15.0
+
+# Build de C/C++ (bridge y módulo nginx), ldd, y las herramientas de deploy.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        bash ca-certificates curl git make \
+        build-essential binutils file \
+        libpcre2-dev libssl-dev zlib1g-dev \
+        systemd \
+        jq tar gzip xz-utils unzip passwd \
+    && rm -rf /var/lib/apt/lists/*
+
+# Toolchain exacta: el mismo Go que declara el registro.
+COPY --from=gotoolchain /usr/local/go /usr/local/go
+ENV PATH=/usr/local/go/bin:/usr/local/bin:/usr/bin:/bin
+# Un shell de login (bash -l) resetea PATH desde /etc/profile: sin esto, `go`
+# desaparece en cualquier sesión interactiva o herramienta que use -l.
+RUN printf 'export PATH=/usr/local/go/bin:/home/gate/go/bin:$PATH\n' > /etc/profile.d/golang.sh \
+    && chmod 0644 /etc/profile.d/golang.sh
+
+ENV GOTOOLCHAIN=local \
+    GOPATH=/home/gate/go \
+    GOCACHE=/home/gate/.cache/go-build \
+    GOFLAGS=-mod=mod
+
+# golangci-lint: mismo método que CI, misma versión pineada.
+RUN curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/HEAD/install.sh \
+        | sh -s -- -b /usr/local/bin "${GOLANGCI_VERSION}" \
+    && golangci-lint --version
+
+# helm: solo lo usa deploy-verify. La versión exacta queda congelada por el digest
+# de la imagen, no por este pin.
+RUN curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 \
+        | bash -s -- --version v3.16.4 \
+    && helm version --short
+
+# Usuario no-root: con root, los tests de permisos 0600 son decorativos y los
+# archivos creados quedan root-owned en el host. Se crea sin depender de
+# `useradd`/`adduser` para que la imagen no necesite paquetes extra solo por esto.
+RUN echo "gate:x:1000:1000::/home/gate:/bin/bash" >> /etc/passwd \
+    && echo "gate:x:1000:" >> /etc/group \
+    && mkdir -p /home/gate/go/pkg/mod /home/gate/.cache/go-build /src \
+    && chown -R 1000:1000 /home/gate /src
+USER gate
+WORKDIR /src
+
+# Autotest de la imagen: si falta una herramienta, el gate que la necesita es
+# not_run para siempre y nadie se entera. Esto lo convierte en un fallo explícito.
+COPY --chown=gate:gate verify-image-selftest /usr/local/bin/verify-image-selftest
+RUN chmod +x /usr/local/bin/verify-image-selftest && verify-image-selftest
+
+CMD ["bash", "-l"]

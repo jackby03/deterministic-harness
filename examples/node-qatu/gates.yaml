@@ -1,0 +1,128 @@
+# Node.js profile — a service with a hot path.
+#
+# It needs no Go on the host: `harness-verify` ships as a static binary inside the
+# verification image (see Dockerfile.verify next to this file).
+#
+# Two gates here use kinds that do not exist yet (`node-test-selectors`,
+# `node-budget`): they are marked `planned` and will report `not_implemented`
+# until written. Everything else runs today with no adapter at all.
+
+schema_version: 13
+default_tier: 2
+
+bootstrap:
+  enabled: true
+  deadline_date: "2027-06-30"
+  allowed_planned: ["contract", "bundle"]
+
+features:
+  traceability: off
+
+runtime:
+  kind: container
+  image: "registry.example/qatu-verify"
+  digest: "sha256:<PINNED>"
+  platform: "linux/amd64"
+  user: "1000:1000"
+  network: "none"
+  workdir: "/src"
+  volumes:
+    repo: "/src"
+    store: "qatu-pnpm-store:/home/gate/.local/share/pnpm"
+
+governance:
+  paths:
+    - "gates.yaml"
+    - "package.json"
+    - "pnpm-lock.yaml"
+    - "tsconfig.json"
+    - ".github/workflows/**"
+    - "CODEOWNERS"
+
+gates:
+  registry-coverage:
+    kind: self
+    check: registry-coverage
+    covers: ["gates.yaml"]
+    min_inventory:
+      rules: ["all_tier3_globs_covered", "no_orphan_gates", "hermetic_runs", "bootstrap_has_deadline"]
+
+  registry-fresh:
+    kind: self
+    check: registry-fresh
+    covers: ["gates.yaml"]
+
+  bootstrap-expired:
+    kind: self
+    check: bootstrap-expired
+    covers: ["gates.yaml"]
+
+  install:
+    kind: command
+    run: "pnpm install --frozen-lockfile --offline"
+    covers: ["package.json", "pnpm-lock.yaml"]
+
+  typecheck:
+    kind: command
+    run: "pnpm tsc --noEmit"
+    covers: ["src/**", "tsconfig.json"]
+
+  lint:
+    kind: command
+    run: "pnpm eslint . --max-warnings 0"
+    covers: ["src/**"]
+
+  unit:
+    kind: json-report
+    run: "pnpm vitest run --reporter=json"
+    covers: ["src/**", "tests/**"]
+    min_inventory:
+      # A floor, not a target: an empty suite must not read as success.
+      min_passing_cases: 120
+      max_failed_cases: 0
+      non_empty_files: ["pnpm-lock.yaml"]
+
+  contract:
+    kind: node-test-selectors
+    status: planned
+    run: "pnpm vitest run tests/contract --reporter=json"
+    covers: ["tests/contract/**"]
+    min_inventory:
+      forbid_skipped_selectors: true
+      required_selectors: ["orders/api contrato"]
+
+  bundle:
+    kind: node-budget
+    status: planned
+    run: "pnpm build && node tools/bundle-size.mjs"
+    covers: ["src/**", "tools/bundle-size.mjs"]
+    min_inventory:
+      max_bytes: { "dist/entry.js": 240000 }
+
+tiers:
+  1: [registry-coverage, bootstrap-expired, typecheck]
+  2: [registry-coverage, registry-fresh, bootstrap-expired, install, typecheck, lint, unit]
+  3:
+    - registry-coverage
+    - registry-fresh
+    - bootstrap-expired
+    - install
+    - typecheck
+    - lint
+    - unit
+    - contract
+    - bundle
+
+touch_sets:
+  tier_1:
+    - "docs/**"
+    - "*.md"
+  tier_3:
+    - "src/server/**"
+    - "src/payments/**"
+    - "src/auth/**"
+    - "db/migrations/**"
+    - "package.json"
+    - "pnpm-lock.yaml"
+    - ".github/workflows/**"
+    - "gates.yaml"

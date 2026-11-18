@@ -1,0 +1,46 @@
+# Verification image for a Node.js project.
+#
+# The harness is written in Go, but the consuming project never installs Go: the
+# binary is compiled here and copied in. The image digest is the identity that
+# makes a local run and a CI run the same claim.
+#
+# Build:
+#   docker build -f Dockerfile.verify -t registry.example/qatu-verify:v1 .
+#   docker push registry.example/qatu-verify:v1
+#   docker buildx imagetools inspect registry.example/qatu-verify:v1   # digest
+#
+# First run needs a warm package store, because gates run with --network none:
+#   docker run --rm -v qatu-pnpm-store:/home/gate/.local/share/pnpm \
+#     -v "$PWD":/src -w /src --user 1000:1000 <image>@<digest> \
+#     bash -c 'pnpm fetch'
+
+FROM golang:1.22-bookworm AS harness
+
+# Copy the harness module (vendor it under tools/harness in your repo).
+COPY harness/ /h
+RUN cd /h && CGO_ENABLED=0 go build -trimpath -o /out/harness-verify ./cmd/harness-verify \
+    && CGO_ENABLED=0 go build -trimpath -o /out/harness-facts ./cmd/harness-facts \
+    && CGO_ENABLED=0 go build -trimpath -o /out/registry-gen ./cmd/registry-gen \
+    && CGO_ENABLED=0 go build -trimpath -o /out/harness-validate ./cmd/harness-validate
+
+FROM node:22-bookworm-slim
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        git ca-certificates bash jq \
+    && rm -rf /var/lib/apt/lists/* \
+    && corepack enable \
+    && echo "gate:x:1000:1000::/home/gate:/bin/bash" >> /etc/passwd \
+    && echo "gate:x:1000:" >> /etc/group \
+    && mkdir -p /home/gate /src && chown -R 1000:1000 /home/gate /src
+
+COPY --from=harness /out/ /usr/local/bin/
+RUN chmod 0755 /usr/local/bin/harness-verify /usr/local/bin/harness-facts \
+        /usr/local/bin/registry-gen /usr/local/bin/harness-validate
+
+USER gate
+ENV PNPM_HOME=/home/gate/.local/share/pnpm \
+    PATH=/home/gate/.local/share/pnpm:/usr/local/bin:/usr/local/sbin:/usr/bin:/bin
+WORKDIR /src
+
+RUN harness-verify --help >/dev/null 2>&1 || true
+CMD ["bash"]

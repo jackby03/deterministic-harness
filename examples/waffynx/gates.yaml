@@ -1,0 +1,420 @@
+# gates.yaml — v12 (completo y único)
+#
+# Motor de verificación determinista. Este archivo es el PERFIL del proyecto:
+# datos declarados. Los hechos observados van en .artifacts/verify-report.json.
+#
+# Reglas que lo gobiernan (no re-declarar en prosa; citar):
+#   - Todo gate declara `kind`: sin kind no hay inventario, y un gate sin
+#     inventario no tiene dientes.
+#   - Nada se satisface por ausencia: inventarios, selectores, seeds, presupuestos.
+#   - Runtime único: imagen `verify` pinneada por digest. El host aporta el
+#     árbol (touched_files, tree_sha, diff_sha256); el contenedor ejecuta.
+#   - Endurecer es libre; contraer exige CODEOWNERS + trailer.
+
+schema_version: 13
+harness:
+  version: "0.1.0"
+  digest: "sha256:<PINNED_AT_DIA0>"   # motor (harness/), no el perfil
+
+bootstrap:
+  enabled: true
+  deadline_date: "2027-03-31"         # CI falla si vence y sigue enabled
+  allowed_planned:                    # exactamente los `planned` que exige tier 3
+    - "static-linkage"
+    - "nginx-module-build"
+    - "deploy-verify"
+    - "allocs-zero-engine"
+
+default_tier: 2
+
+# Rutas que ningún implementer puede editar. Vive acá para que ningún spec
+# tenga que enumerarlas: la segunda copia es la que se desactualiza.
+# Nombres de los documentos normativos *de este proyecto*. El framework no los
+# conoce: los recibe de acá. `enforced_by_doc` es el archivo que declara
+# `enforced-by:` por regla; `docs` mapea el nombre con que se cita cada documento
+# ("Constitution §1.2") a su ruta.
+traceability:
+  enforced_by_doc: "constitution.md"
+  docs:
+    "Constitution": "constitution.md"
+    "AGENTS.md": "AGENTS.md"
+
+governance:
+  paths:
+    - "gates.yaml"
+    - "constitution.md"
+    - "AGENTS.md"
+    - "FEATURE_MAP.md"
+    - ".golangci.yml"
+    - "Makefile"
+    - "CODEOWNERS"
+    - ".github/workflows/**"
+    - "tools/**"
+    - "scripts/**"
+    - "specs/HARNESS.md"
+    - "specs/templates/**"
+
+features:
+  traceability: on      # enforced-by sobre constitution.md; poné `off` en un proyecto sin constitución
+  bootstrap: on
+
+runtime:
+  kind: container
+  image: "ghcr.io/jackby03/waffynx-verify"
+  digest: "sha256:<PINNED_AT_DIA0>"
+  platform: "linux/amd64"
+  user: "1000:1000"                   # nunca root: si no, los tests de permisos son decorativos
+  network: "none"                     # ningún gate necesita red; el toolchain vive en la imagen
+  workdir: "/src"
+  volumes:
+    repo: "/src"
+    gocache: "waffynx-gocache:/home/gate/.cache/go-build"   # named volume, no bind mount
+    gomodcache: "waffynx-gomodcache:/home/gate/go/pkg/mod"
+    breaker: "waffynx-orca-breaker:/breaker"                # sobrevive worktrees; no usa .git
+  git:
+    core_filemode: "false"
+  host_computes:
+    - "touched_files"
+    - "diff_sha256"
+    - "worktree_tree_sha"
+
+# Informativo: la verdad vinculante es el digest de la imagen.
+image_toolchains:
+  go: "1.22.12"
+  golangci_lint: "v2.15.0"
+  helm: "3.x"
+  cpp: "gcc 12 (g++)"
+
+override_policy:
+  require_human_codeowner: true
+  require_trailer: "Override-Gate-Reason"
+  triggers:
+    - "tier_gate_shrink"
+    - "linter_set_shrink"
+    - "enforced_by_shrink"
+    - "recomputation_mismatch"
+    - "image_digest_mismatch"
+    - "nolint_budget_increase"
+  auto_allow:
+    - "gate_added"
+    - "inventory_added"
+    - "toolchain_bump"
+
+# El reviewer es un agente de Orca (`--agent`) con un modelo explícito (`--model`).
+# Mismo modelo que los implementers por política de datos: la ventaja es el
+# procedimiento (contexto limpio + framing adversarial), no la capacidad, y por eso
+# el control negativo de evals/ es obligatorio.
+review:
+  agent: "pi"
+  model: "deepseek-v4.1-flash"
+  limit:
+    per_review_cap_tokens: 120000
+    monthly_ceiling_reviews: 20
+  max_context_requests: 3
+  triggers:
+    - "tier_3_paths"
+    - "governance_paths"
+    - "enforced_by_shrink"
+    - "linter_set_shrink"
+    - "nolint_budget_increase"
+  scope: "complement_of_gates"
+  on_limit_exhausted: "escalate_human"
+  verdict: "approve | reject | needs-spec"
+  negative_control: "evals/review-must-reject"
+
+gates:
+  # ---------------------------------------------------------------- engine checks
+  # `kind: self` = el motor lo verifica en proceso. Sin `run`, sin invocarse a sí
+  # mismo, sin depender de que exista un binario aparte.
+
+  registry-coverage:
+    kind: self
+    check: registry-coverage
+    covers: ["gates.yaml", ".golangci.yml", "Makefile", ".github/workflows/**", "tools/**", "scripts/**", "CODEOWNERS"]
+    min_inventory:
+      rules:
+        - "all_tier3_globs_covered"
+        - "covers_intersect_touch_sets"
+        - "no_orphan_gates"
+        - "planned_gates_within_bootstrap_allowlist"
+        - "valid_kinds"
+        - "valid_gate_selectors"
+        - "hermetic_runs"
+        - "bootstrap_has_deadline"
+
+  registry-fresh:
+    kind: self
+    check: registry-fresh
+    covers: ["gates.yaml"]
+    min_inventory:
+      # Falla si las secciones generadas no coinciden con el árbol. El motor corre
+      # harness-facts y compara; lo medido (benchmarks) solo se exige en el tier
+      # que puede medir.
+
+  bootstrap-expired:
+    kind: self
+    check: bootstrap-expired
+    covers: ["gates.yaml"]
+    min_inventory:
+      enforced: true
+
+  section-refs:
+    kind: self
+    check: citations
+    covers:
+      - "constitution.md"
+      - "AGENTS.md"
+      - "FEATURE_MAP.md"
+      - "docs/**"
+      - "specs/**"
+      - "README.md"
+      - ".golangci.yml"
+      - "Makefile"
+      - "**/*.go"
+      - ".github/workflows/**"
+    min_inventory:
+      # Medido por harness-facts: 25 citas en el árbol, 1 colgada
+      # (.golangci.yml:77 -> AGENTS.md §7.2) => 24 resolubles. El piso es 25 y se
+      # alcanza en el commit Día-0 que crea ### 7.2: hasta entonces este gate
+      # está en rojo a propósito.
+      min_resolvable_citations: 25
+      # Hechos observados. Los escribe registry-gen; a mano no se tocan.
+      observed:
+        # BEGIN GENERATED:citations
+        resolvable: 24
+        dangling:
+          - ".golangci.yml:77"
+        # END GENERATED:citations
+
+  enforced-by:
+    kind: self
+    check: traceability
+    covers: ["constitution.md", "gates.yaml"]
+    min_inventory:
+      sections_required: ["§1", "§2", "§3"]
+      require_active_gate_for_enforced: true
+      require_selector_exists: true
+      allow_shrink: false
+
+  registry-selftest:
+    kind: go-test-selectors
+    run: "CGO_ENABLED=0 go test -v -run='^TestSelftest' ./tools/harness/inventory/..."
+    covers: ["tools/harness/**"]
+    min_inventory:
+      forbid_skipped_selectors: true
+      required_selectors:
+        - "TestSelftestAllocsRejectsRegression"
+        - "TestSelftestUnlistedBenchmarkRejected"
+        - "TestSelftestSelectorSkipAndAbsenceRejected"
+        - "TestSelftestDanglingCitationRejected"
+        - "TestSelftestSeedlessTargetRejected"
+        - "TestSelftestUnjustifiedNolintRejected"
+
+  nolint-budget:
+    kind: nolint
+    # El verificador materializa `budget:` en $GATE_INVENTORY/<gate>.json.
+    run: "CGO_ENABLED=0 go run ./tools/harness/cmd/nolint-budget -root . -budget $GATE_INVENTORY/nolint-budget.json"
+    covers: ["cmd/**", "internal/**", "pkg/**", "tools/**"]
+    min_inventory:
+      allowed_linters: ["gosec"]
+      require_reason: true
+      fail_on_unlisted_directory: true
+      budget:
+        "internal/api": 2
+        "internal/upstream": 2
+      observed:
+        # BEGIN GENERATED:nolint
+        "internal/api": 2
+        "internal/upstream": 2
+        # END GENERATED:nolint
+
+  # ---------------------------------------------------------------- build & static
+
+  build-go:
+    kind: command
+    run: "CGO_ENABLED=0 go build ./..."
+    covers: ["cmd/**", "internal/**", "pkg/**"]
+
+  static-linkage:
+    kind: command
+    status: planned    # se activa al extraer ci.yml:81-95 a scripts/verify-static-linkage.sh
+    run: "bash scripts/verify-static-linkage.sh"
+    covers: ["cmd/waf-api/**", "cmd/waf-agent/**"]
+
+  bridge-build:
+    kind: command
+    run: "CGO_ENABLED=1 make bridge-build"
+    covers: ["internal/appsec/**", "cmd/appsec-bridge/**"]
+
+  # ---------------------------------------------------------------- tests & lint
+
+  test-all:
+    kind: go-test
+    run: "CGO_ENABLED=1 go test ./..."
+    covers: ["cmd/**", "internal/**", "pkg/**", "tools/**"]
+
+  race:
+    kind: go-test
+    run: "CGO_ENABLED=1 go test -race ./..."
+    covers: ["internal/engine/**", "internal/appsec/**", "internal/auth/**", "internal/tls/**", "pkg/proto/**"]
+
+  socket-perms:
+    kind: go-test-selectors
+    run: "CGO_ENABLED=0 go test -v -run='^(TestSidecarSocketPermissions|TestSocketPermissions)$' ./internal/engine/... ./cmd/appsec-bridge/..."
+    covers: ["internal/engine/**", "cmd/appsec-bridge/**"]
+    min_inventory:
+      forbid_skipped_selectors: true
+      required_selectors:
+        - "TestSidecarSocketPermissions"
+        - "TestSocketPermissions"
+
+  lint-linux:
+    kind: command
+    run: "CGO_ENABLED=0 golangci-lint run ./..."
+    covers: ["cmd/**", "internal/**", "pkg/**", "tools/**"]
+
+  # ---------------------------------------------------------------- functional
+
+  waffynx-verify:
+    kind: json-report
+    run: "CGO_ENABLED=0 go run ./cmd/waffynx verify -c configs/waffynx.yaml --json"
+    covers: ["configs/**", "internal/policy/**", "internal/rules/**"]
+    min_inventory:
+      min_passing_cases: 20      # medido: 20 passed, 1 skip (bot-protection mode=log), exit 0
+      max_failed_cases: 0
+      non_empty_files: ["configs/waffynx.yaml", "test/eval_sqli.json", "test/eval_normal.json"]
+
+  # ---------------------------------------------------------------- performance
+
+  allocs-baseline:
+    kind: go-bench
+    run: "CGO_ENABLED=0 go test -run=^$ -bench=. -benchmem ./internal/rules/... ./internal/appsec/..."
+    covers: ["internal/rules/**", "internal/appsec/**"]
+    min_inventory:
+      fail_on_unlisted_benchmark: true
+      # Medido en linux/amd64 con go1.22.12: la cuenta de allocations depende de
+      # arch + toolchain, no del reloj. Re-medir si cambia cualquiera de los dos.
+      benchmarks_max_allocs:
+        "github.com/jackby03/waffynx/internal/rules:BenchmarkEvaluate_QueryParam_Single": 1
+        "github.com/jackby03/waffynx/internal/rules:BenchmarkEvaluate_QueryParam_Multi": 1
+        "github.com/jackby03/waffynx/internal/rules:BenchmarkEvaluate_QueryParam_NoMatch": 1
+        "github.com/jackby03/waffynx/internal/appsec:BenchmarkBasicScorer_Evaluate_Clean": 35
+        "github.com/jackby03/waffynx/internal/appsec:BenchmarkBasicScorer_CheckPatterns": 12
+      observed_allocs:
+        # BEGIN GENERATED:benchmarks
+        "github.com/jackby03/waffynx/internal/rules:BenchmarkEvaluate_QueryParam_Single": 1
+        "github.com/jackby03/waffynx/internal/rules:BenchmarkEvaluate_QueryParam_Multi": 1
+        "github.com/jackby03/waffynx/internal/rules:BenchmarkEvaluate_QueryParam_NoMatch": 1
+        "github.com/jackby03/waffynx/internal/appsec:BenchmarkBasicScorer_Evaluate_Clean": 35
+        "github.com/jackby03/waffynx/internal/appsec:BenchmarkBasicScorer_CheckPatterns": 12
+        # END GENERATED:benchmarks
+
+  allocs-zero-engine:
+    kind: go-bench
+    status: planned    # se activa con engine_bench_test.go en el mismo commit
+    run: "CGO_ENABLED=0 go test -run=^$ -bench=BenchmarkEngineHotPath -benchmem ./internal/engine/..."
+    covers: ["internal/engine/**"]
+    min_inventory:
+      fail_on_unlisted_benchmark: true
+      benchmarks_max_allocs:
+        "github.com/jackby03/waffynx/internal/engine:BenchmarkEngineHotPath": 0
+
+  fuzz-corpus:
+    kind: go-fuzz
+    covers: ["internal/parsers/**", "internal/policy/**"]
+    invocations:
+      - { package: "github.com/jackby03/waffynx/internal/parsers", target: "FuzzInspectGraphQL",    fuzztime: "15s", env: { CGO_ENABLED: "0" } }
+      - { package: "github.com/jackby03/waffynx/internal/parsers", target: "FuzzInspectFileUpload", fuzztime: "15s", env: { CGO_ENABLED: "0" } }
+      - { package: "github.com/jackby03/waffynx/internal/policy",  target: "FuzzPolicyEvaluate",    fuzztime: "15s", env: { CGO_ENABLED: "0" } }
+    min_inventory:
+      min_seeds_per_target: 1   # f.Add (AST) + archivos en testdata/fuzz/<Target>
+      observed_seeds:
+        # BEGIN GENERATED:seeds
+        "FuzzInspectFileUpload": 3
+        "FuzzInspectGraphQL": 4
+        "FuzzPolicyEvaluate": 3
+        # END GENERATED:seeds
+
+  # ---------------------------------------------------------------- C module & deploy
+
+  nginx-module-build:
+    kind: command
+    status: planned    # la imagen verify ya trae los deps; falta submodule init en la imagen
+    run: "CGO_ENABLED=1 make nginx-build"
+    covers: ["modules/ngx_waffynx/**"]
+
+  deploy-verify:
+    kind: command
+    status: planned
+    run: "helm lint deploy/helm/waffynx && systemd-analyze verify deploy/systemd/*.service"
+    covers: ["deploy/**"]
+
+tiers:
+  1: [registry-coverage, registry-fresh, bootstrap-expired, section-refs]
+  2:
+    - registry-coverage
+    - registry-fresh
+    - bootstrap-expired
+    - section-refs
+    - registry-selftest
+    - nolint-budget
+    - enforced-by
+    - build-go
+    - test-all
+    - race
+    - lint-linux
+  3:
+    - registry-coverage
+    - registry-fresh
+    - bootstrap-expired
+    - section-refs
+    - registry-selftest
+    - nolint-budget
+    - enforced-by
+    - build-go
+    - static-linkage
+    - socket-perms
+    - bridge-build
+    - test-all
+    - race
+    - lint-linux
+    - waffynx-verify
+    - allocs-baseline
+    - allocs-zero-engine
+    - fuzz-corpus
+    - nginx-module-build
+    - deploy-verify
+
+# El Tier resultante es el máximo de todos los globs que matchean.
+touch_sets:
+  tier_1:
+    - "docs/**"
+    - "specs/**"
+    - "README.md"
+  tier_3:
+    - "modules/ngx_waffynx/**"
+    - "internal/engine/**"
+    - "internal/appsec/**"
+    - "internal/policy/**"
+    - "internal/parsers/**"
+    - "internal/rules/**"
+    - "pkg/proto/**"
+    - "internal/auth/**"
+    - "internal/tls/**"
+    - "cmd/waf-api/**"
+    - "cmd/waf-agent/**"
+    - "cmd/appsec-bridge/**"
+    - "configs/**"
+    - "deploy/**"
+    - "scripts/**"
+    - "specs/HARNESS.md"
+    - "specs/templates/**"
+    - "AGENTS.md"
+    - "FEATURE_MAP.md"
+    - "gates.yaml"
+    - ".golangci.yml"
+    - "Makefile"
+    - ".github/workflows/**"
+    - "tools/**"
+    - "constitution.md"
+    - "CODEOWNERS"
