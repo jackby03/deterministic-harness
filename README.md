@@ -96,4 +96,4 @@ verified against a real project; the Node.js ones are specified in
 
 ## License
 
-Not chosen yet. This is a blocker for publishing — see [PUBLISH.md](PUBLISH.md).
+MIT — see [LICENSE](LICENSE).

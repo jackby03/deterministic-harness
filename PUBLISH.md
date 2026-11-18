@@ -5,9 +5,8 @@ step because it needs your credentials.
 
 ## Before you push: four decisions
 
-1. **License.** There is no `LICENSE` file on purpose: choosing one is a legal
-   decision, not a technical one. Add it before the repo goes public — without a
-   license, nobody may legally reuse it, which defeats the purpose.
+1. **License.** Done: MIT, `Copyright (c) 2026 jackby03`. Replace the holder with
+   a legal name or entity if you prefer.
 2. **Module path.** It currently says `github.com/jackby03/deterministic-harness`.
    If the final location differs, change it once:
 
@@ -66,7 +65,7 @@ either. That is why the job exists.
 
 | Missing | Why | Where it would go |
 | :--- | :--- | :--- |
-| `LICENSE` | a legal decision | root |
+| Release automation | one tag is enough until there are consumers | `.github/workflows/release.yml` |
 | Node adapters (`node-test-selectors`, `node-budget`) | specified in `docs/adapting.md`, not written | `internal/inventory`, `verify.inventoryFor` |
 | A reference implementation of the agent hooks | written as a draft, never executed (`extensions/`) | the runtime's repo |
 | Release automation | one tag is enough until there are consumers | `.github/workflows/release.yml` |
